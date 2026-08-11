@@ -36,6 +36,50 @@ $cmds = @($settings.hooks.SessionStart | ForEach-Object { $_.hooks } | ForEach-O
 Assert-True (($cmds -contains 'echo hi') -and (($cmds -join ' ') -match 'usage-tier')) 'merge: old hook kept, new added'
 Assert-True ((Get-ChildItem $root -Filter 'settings.json.bak-*').Count -ge 1) 'merge: backup written'
 
+# --- null hooks value doesn't crash ---
+$root = Join-Path $env:TEMP ("ua-inst-" + [guid]::NewGuid().ToString('N'))
+$env:USAGE_AWARE_INSTALL_ROOT = $root
+New-Item -ItemType Directory -Force $root | Out-Null
+Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value @'
+{"hooks":null}
+'@
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer
+$settings = Get-Content (Join-Path $root 'settings.json') -Raw | ConvertFrom-Json
+$cmds = @($settings.hooks.SessionStart | ForEach-Object { $_.hooks } | ForEach-Object { $_.command })
+Assert-True (($cmds -join ' ') -match 'usage-tier\.ps1') 'null hooks: hook command registered'
+Assert-True ($null -ne $settings.hooks) 'null hooks: hooks object exists'
+
+# --- null SessionStart value doesn't corrupt ---
+$root = Join-Path $env:TEMP ("ua-inst-" + [guid]::NewGuid().ToString('N'))
+$env:USAGE_AWARE_INSTALL_ROOT = $root
+New-Item -ItemType Directory -Force $root | Out-Null
+Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value @'
+{"hooks":{"SessionStart":null}}
+'@
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer
+$settings = Get-Content (Join-Path $root 'settings.json') -Raw | ConvertFrom-Json
+$cmds = @($settings.hooks.SessionStart | ForEach-Object { $_.hooks } | ForEach-Object { $_.command })
+Assert-True (($cmds.Count -eq 1) -and (($cmds -join ' ') -match 'usage-tier\.ps1')) 'null SessionStart: not corrupted to [null, ...]'
+
+# --- same-second rerun doesn't destroy prior backup ---
+$root = Join-Path $env:TEMP ("ua-inst-" + [guid]::NewGuid().ToString('N'))
+$env:USAGE_AWARE_INSTALL_ROOT = $root
+New-Item -ItemType Directory -Force $root | Out-Null
+$origContent = @'
+{"model":"original"}
+'@
+Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value $origContent
+# First run creates backup
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer | Out-Null
+$firstBackup = Get-ChildItem $root -Filter 'settings.json.bak-*' | Select-Object -First 1
+$firstBackupContent = Get-Content $firstBackup.FullName -Raw
+# Second run (same second, if fast enough) should not overwrite first backup
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer | Out-Null
+$allBackups = @(Get-ChildItem $root -Filter 'settings.json.bak-*')
+Assert-True ($allBackups.Count -ge 1) 'collision: at least one backup exists'
+$firstBackupAfter = Get-Content $firstBackup.FullName -Raw
+Assert-True ($firstBackupContent -eq $firstBackupAfter) 'collision: first backup unchanged'
+
 Remove-Item Env:USAGE_AWARE_INSTALL_ROOT -ErrorAction SilentlyContinue
 if ($script:Fails -gt 0) { Write-Host "$script:Fails FAILED"; exit 1 }
 Write-Host 'all passed'; exit 0

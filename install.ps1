@@ -18,16 +18,34 @@ $hookCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$hookPath`
 $settingsPath = Join-Path $Root 'settings.json'
 if (Test-Path $settingsPath) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    Copy-Item $settingsPath "$settingsPath.bak-$stamp"
+    $backupPath = "$settingsPath.bak-$stamp"
+    # Handle same-second collision: find a unique backup path
+    $suffix = 2
+    while (Test-Path $backupPath) {
+        $backupPath = "$settingsPath.bak-$stamp-$suffix"
+        $suffix++
+    }
+    Copy-Item $settingsPath $backupPath
     $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
 } else {
     $settings = [pscustomobject]@{}
 }
 
-if ($null -eq $settings.PSObject.Properties['hooks']) {
+# Handle null or missing hooks property
+$hooksProperty = $settings.PSObject.Properties['hooks']
+if ($null -eq $hooksProperty -or $null -eq $hooksProperty.Value) {
+    if ($null -ne $hooksProperty) {
+        $settings.PSObject.Properties.Remove('hooks')
+    }
     $settings | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
 }
-if ($null -eq $settings.hooks.PSObject.Properties['SessionStart']) {
+
+# Handle null or missing SessionStart property
+$sessionStartProperty = $settings.hooks.PSObject.Properties['SessionStart']
+if ($null -eq $sessionStartProperty -or $null -eq $sessionStartProperty.Value) {
+    if ($null -ne $sessionStartProperty) {
+        $settings.hooks.PSObject.Properties.Remove('SessionStart')
+    }
     $settings.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @()
 }
 
