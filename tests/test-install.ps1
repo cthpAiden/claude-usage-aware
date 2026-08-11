@@ -70,9 +70,11 @@ $fixedTimestamp = 'collision-test-2026'
 $sentinelPath = Join-Path $root "settings.json.bak-$fixedTimestamp"
 "SENTINEL_CONTENT" | Set-Content $sentinelPath -Encoding utf8
 $sentinelBefore = Get-Content $sentinelPath -Raw
-# Create settings and run installer with fixed timestamp
+# Create settings and run installer with fixed timestamp via environment variable
 Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value '{"v":1}'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer -_TestTimestamp $fixedTimestamp | Out-Null
+$env:USAGE_AWARE_TEST_TIMESTAMP = $fixedTimestamp
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer | Out-Null
+Remove-Item Env:USAGE_AWARE_TEST_TIMESTAMP -ErrorAction SilentlyContinue
 # Verify: sentinel still exists and is untouched
 Assert-True (Test-Path $sentinelPath) 'collision: sentinel file exists'
 $sentinelAfter = Get-Content $sentinelPath -Raw

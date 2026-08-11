@@ -1,7 +1,6 @@
 # Installs the usage-aware skill + SessionStart hook into ~/.claude (or
 # USAGE_AWARE_INSTALL_ROOT for tests). Additive settings.json merge; a
 # timestamped backup is written before any modification.
-param([string]$_TestTimestamp)  # Internal: for testing collision logic
 $ErrorActionPreference = 'Stop'
 
 $Root = if ($env:USAGE_AWARE_INSTALL_ROOT) { $env:USAGE_AWARE_INSTALL_ROOT } else { Join-Path $HOME '.claude' }
@@ -18,7 +17,7 @@ $hookCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$hookPath`
 
 $settingsPath = Join-Path $Root 'settings.json'
 if (Test-Path $settingsPath) {
-    $stamp = if ($_TestTimestamp) { $_TestTimestamp } else { Get-Date -Format 'yyyyMMdd-HHmmss' }
+    $stamp = if ($env:USAGE_AWARE_TEST_TIMESTAMP) { $env:USAGE_AWARE_TEST_TIMESTAMP } else { Get-Date -Format 'yyyyMMdd-HHmmss' }
     $backupPath = "$settingsPath.bak-$stamp"
     # Handle same-second collision: find a unique backup path
     $suffix = 2
