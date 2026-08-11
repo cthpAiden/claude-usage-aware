@@ -121,7 +121,11 @@ function Invoke-Refresh {
     }
     $tmp = "$CachePath.tmp"
     Set-Content -LiteralPath $tmp -Value (([pscustomobject]$cache) | ConvertTo-Json) -Encoding utf8
-    Move-Item -LiteralPath $tmp -Destination $CachePath -Force
+    if (Test-Path -LiteralPath $CachePath) {
+        [System.IO.File]::Replace($tmp, $CachePath, $null)
+    } else {
+        Move-Item -LiteralPath $tmp -Destination $CachePath
+    }
 }
 
 if ($Refresh) { try { Invoke-Refresh } catch { } exit 0 }
