@@ -61,24 +61,25 @@ $settings = Get-Content (Join-Path $root 'settings.json') -Raw | ConvertFrom-Jso
 $cmds = @($settings.hooks.SessionStart | ForEach-Object { $_.hooks } | ForEach-Object { $_.command })
 Assert-True (($cmds.Count -eq 1) -and (($cmds -join ' ') -match 'usage-tier\.ps1')) 'null SessionStart: not corrupted to [null, ...]'
 
-# --- same-second rerun doesn't destroy prior backup ---
+# --- backup collision handling: pre-created sentinel forces escalation ---
 $root = Join-Path $env:TEMP ("ua-inst-" + [guid]::NewGuid().ToString('N'))
 $env:USAGE_AWARE_INSTALL_ROOT = $root
 New-Item -ItemType Directory -Force $root | Out-Null
-$origContent = @'
-{"model":"original"}
-'@
-Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value $origContent
-# First run creates backup
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer | Out-Null
-$firstBackup = Get-ChildItem $root -Filter 'settings.json.bak-*' | Select-Object -First 1
-$firstBackupContent = Get-Content $firstBackup.FullName -Raw
-# Second run (same second, if fast enough) should not overwrite first backup
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer | Out-Null
-$allBackups = @(Get-ChildItem $root -Filter 'settings.json.bak-*')
-Assert-True ($allBackups.Count -ge 1) 'collision: at least one backup exists'
-$firstBackupAfter = Get-Content $firstBackup.FullName -Raw
-Assert-True ($firstBackupContent -eq $firstBackupAfter) 'collision: first backup unchanged'
+# Use fixed timestamp to guarantee collision (independent of wall-clock time)
+$fixedTimestamp = 'collision-test-2026'
+$sentinelPath = Join-Path $root "settings.json.bak-$fixedTimestamp"
+"SENTINEL_CONTENT" | Set-Content $sentinelPath -Encoding utf8
+$sentinelBefore = Get-Content $sentinelPath -Raw
+# Create settings and run installer with fixed timestamp
+Set-Content -Path (Join-Path $root 'settings.json') -Encoding utf8 -Value '{"v":1}'
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer -_TestTimestamp $fixedTimestamp | Out-Null
+# Verify: sentinel still exists and is untouched
+Assert-True (Test-Path $sentinelPath) 'collision: sentinel file exists'
+$sentinelAfter = Get-Content $sentinelPath -Raw
+Assert-True ($sentinelBefore -eq $sentinelAfter) 'collision: sentinel untouched'
+# Verify: new backup was created at -2 due to collision
+$escaladedPath = Join-Path $root "settings.json.bak-$fixedTimestamp-2"
+Assert-True (Test-Path $escaladedPath) 'collision: escalated to -2'
 
 Remove-Item Env:USAGE_AWARE_INSTALL_ROOT -ErrorAction SilentlyContinue
 if ($script:Fails -gt 0) { Write-Host "$script:Fails FAILED"; exit 1 }
