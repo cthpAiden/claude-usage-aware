@@ -82,8 +82,19 @@ function Format-Line($d, [bool]$stale) {
     if ($stale) { "$line (stale)" } else { "$line " + [char]0xB7 + " tier: $(Get-Tier $d.week_pct)" }
 }
 
-# Spawn the detached refresher. No-op until Task 4.
-function Start-Refresher { }
+# Fire-and-forget hidden refresher. The hook must never block session start
+# on the network, so the refresh happens in a detached process; THIS session
+# gets stale-or-nothing and the NEXT one reads the fresh cache.
+function Start-Refresher {
+    if ($env:USAGE_AWARE_NO_SPAWN -eq '1') { return }
+    $lockAge = Get-AgeMinutes $LockPath
+    if ($null -ne $lockAge -and $lockAge -lt 5) { return }  # one in flight (or just failed) — don't pile up
+    New-Item -ItemType Directory -Force $UsageDir | Out-Null
+    Set-Content -LiteralPath $LockPath -Value $PID -Encoding ascii
+    Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Refresh' `
+        -WindowStyle Hidden
+}
 
 # Headless refresh: let the official CLI fetch the numbers with its own
 # credentials; we only parse the text it prints and cache two lines of it.

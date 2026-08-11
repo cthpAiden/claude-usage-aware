@@ -134,5 +134,33 @@ $env:PATH = $savedPath
 $cache = Get-Content (Join-Path "$d\usage" 'cache.json') -Raw | ConvertFrom-Json
 Assert-Eq $cache.week_pct 45 'refresher: garbage output keeps old cache'
 
+# --- stale sources spawn the refresher, which fills the cache (end to end) ---
+$d = New-Sandbox
+Remove-Item Env:USAGE_AWARE_NO_SPAWN -ErrorAction SilentlyContinue
+$savedPath = $env:PATH
+Install-FakeClaude $d $Fixture
+Invoke-Hook | Out-Null   # both sources missing -> silent, but must spawn
+$deadline = (Get-Date).AddSeconds(15)
+while (-not (Test-Path (Join-Path "$d\usage" 'cache.json')) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 250
+}
+$env:PATH = $savedPath
+$env:USAGE_AWARE_NO_SPAWN = '1'
+Assert-Eq (Test-Path (Join-Path "$d\usage" 'refresh.lock')) 'True' 'spawn: lockfile written'
+Assert-Eq (Test-Path (Join-Path "$d\usage" 'cache.json')) 'True' 'spawn: detached refresher filled cache'
+
+# --- fresh lockfile suppresses a second spawn ---
+$d = New-Sandbox
+Remove-Item Env:USAGE_AWARE_NO_SPAWN -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$d\usage" | Out-Null
+Set-Content -Path (Join-Path "$d\usage" 'refresh.lock') -Value '12345' -Encoding ascii
+$before = (Get-Item (Join-Path "$d\usage" 'refresh.lock')).LastWriteTime
+Invoke-Hook | Out-Null
+Start-Sleep -Seconds 2
+$env:USAGE_AWARE_NO_SPAWN = '1'
+$after = (Get-Item (Join-Path "$d\usage" 'refresh.lock')).LastWriteTime
+Assert-Eq $after $before 'fresh lockfile blocks respawn'
+Assert-Eq (Test-Path (Join-Path "$d\usage" 'cache.json')) 'False' 'blocked spawn wrote no cache'
+
 if ($script:Fails -gt 0) { Write-Host "$script:Fails FAILED"; exit 1 }
 Write-Host 'all passed'; exit 0
