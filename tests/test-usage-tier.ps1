@@ -100,5 +100,39 @@ $result = Invoke-Hook
 Remove-Item Env:USAGE_AWARE_REFRESH -ErrorAction SilentlyContinue
 Assert-HookOutput $result '' 'USAGE_AWARE_REFRESH guard exits silently'
 
+# Fake `claude` on PATH: a .cmd shim that types a canned report.
+function Install-FakeClaude($dir, $reportPath) {
+    $bin = Join-Path $dir 'bin'
+    New-Item -ItemType Directory -Force $bin | Out-Null
+    Set-Content -Path (Join-Path $bin 'claude.cmd') -Encoding ascii -Value "@echo off`r`ntype `"$reportPath`""
+    $env:PATH = "$bin;$env:PATH"
+}
+
+$Fixture = Join-Path $PSScriptRoot 'fixtures\report.txt'
+
+# --- refresher writes cache from the fixture report ---
+$d = New-Sandbox
+$savedPath = $env:PATH
+Install-FakeClaude $d $Fixture
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Hook -Refresh
+$env:PATH = $savedPath
+$cache = Get-Content (Join-Path "$d\usage" 'cache.json') -Raw | ConvertFrom-Json
+Assert-Eq $cache.week_pct 39 'refresher: week_pct parsed'
+Assert-Eq $cache.session_pct 32 'refresher: session_pct parsed'
+Assert-Eq $cache.week_resets 'Jul 16, 9:59am' 'refresher: week reset string verbatim'
+Assert-Eq (Test-Path (Join-Path "$d\usage" 'cache.json.tmp')) 'False' 'refresher: no tmp file left behind'
+
+# --- refresher on garbage output leaves old cache intact ---
+$d = New-Sandbox
+Write-Cache $d 45 60
+$garbage = Join-Path "$d\usage" 'garbage.txt'
+Set-Content -Path $garbage -Value 'Rate limits are unavailable right now' -Encoding utf8
+$savedPath = $env:PATH
+Install-FakeClaude $d $garbage
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Hook -Refresh
+$env:PATH = $savedPath
+$cache = Get-Content (Join-Path "$d\usage" 'cache.json') -Raw | ConvertFrom-Json
+Assert-Eq $cache.week_pct 45 'refresher: garbage output keeps old cache'
+
 if ($script:Fails -gt 0) { Write-Host "$script:Fails FAILED"; exit 1 }
 Write-Host 'all passed'; exit 0

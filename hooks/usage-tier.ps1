@@ -85,7 +85,46 @@ function Format-Line($d, [bool]$stale) {
 # Spawn the detached refresher. No-op until Task 4.
 function Start-Refresher { }
 
-if ($Refresh) { exit 0 }  # Invoke-Refresh lands in Task 3
+# Headless refresh: let the official CLI fetch the numbers with its own
+# credentials; we only parse the text it prints and cache two lines of it.
+function Invoke-Refresh {
+    New-Item -ItemType Directory -Force $UsageDir | Out-Null
+    Set-Content -LiteralPath $LockPath -Value $PID -Encoding ascii
+    $outFile = Join-Path $UsageDir 'refresh-out.txt'
+    # The claude child fires this same hook on ITS startup; the guard env var
+    # (inherited cmd -> claude -> hook) makes that invocation exit instantly.
+    $env:USAGE_AWARE_REFRESH = '1'
+    $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
+    $p = Start-Process -FilePath $cmdExe `
+        -ArgumentList '/C', 'claude -p --no-session-persistence /usage' `
+        -NoNewWindow -PassThru -RedirectStandardOutput $outFile
+    if (-not $p.WaitForExit(60000)) {
+        # cmd.exe wrapper means claude is a grandchild — kill the whole tree,
+        # or hung fetches pile up one per refresh (Clawdometer learned this).
+        $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        & $taskkill /PID $p.Id /T /F | Out-Null
+        return
+    }
+    $text = Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+    if (-not $text) { return }
+    $week = [regex]::Match($text, '(?m)^\s*Current week \(all models\): (\d+)% used.*?resets ([^(]+?)\s*\(')
+    if (-not $week.Success) { return }  # wording changed or fetch failed: keep old cache
+    $sess = [regex]::Match($text, '(?m)^\s*Current session: (\d+)% used.*?resets ([^(]+?)\s*\(')
+    $cache = [ordered]@{
+        fetched_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        week_pct = [int]$week.Groups[1].Value
+        week_resets = $week.Groups[2].Value.Trim()
+    }
+    if ($sess.Success) {
+        $cache['session_pct'] = [int]$sess.Groups[1].Value
+        $cache['session_resets'] = $sess.Groups[2].Value.Trim()
+    }
+    $tmp = "$CachePath.tmp"
+    Set-Content -LiteralPath $tmp -Value (([pscustomobject]$cache) | ConvertTo-Json) -Encoding utf8
+    Move-Item -LiteralPath $tmp -Destination $CachePath -Force
+}
+
+if ($Refresh) { try { Invoke-Refresh } catch { } exit 0 }
 
 try {
     $liveAge = Get-AgeMinutes $LivePath
