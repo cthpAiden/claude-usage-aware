@@ -10,11 +10,19 @@ if ($env:USAGE_AWARE_REFRESH -eq '1') { exit 0 }
 
 $ErrorActionPreference = 'Stop'
 
-$UsageDir = if ($env:USAGE_AWARE_DIR) { $env:USAGE_AWARE_DIR } else { Join-Path $HOME '.claude\usage-aware' }
-$ClawDir  = if ($env:CLAWDOMETER_DIR) { $env:CLAWDOMETER_DIR } else { Join-Path $HOME '.clawdometer' }
-$LivePath  = Join-Path $ClawDir 'live.json'
-$CachePath = Join-Path $UsageDir 'cache.json'
-$LockPath  = Join-Path $UsageDir 'refresh.lock'
+$UsageDir = $null
+$ClawDir = $null
+$LivePath = $null
+$CachePath = $null
+$LockPath = $null
+
+try {
+    $UsageDir = if ($env:USAGE_AWARE_DIR) { $env:USAGE_AWARE_DIR } else { Join-Path $HOME '.claude\usage-aware' }
+    $ClawDir  = if ($env:CLAWDOMETER_DIR) { $env:CLAWDOMETER_DIR } else { Join-Path $HOME '.clawdometer' }
+    $LivePath  = Join-Path $ClawDir 'live.json'
+    $CachePath = Join-Path $UsageDir 'cache.json'
+    $LockPath  = Join-Path $UsageDir 'refresh.lock'
+} catch { exit 0 }
 
 function Get-AgeMinutes($path) {
     if (-not (Test-Path -LiteralPath $path)) { return $null }
